@@ -1,0 +1,139 @@
+ -----
+ Release Notes for Apache Helix 2.0.0
+ -----
+
+~~ Licensed to the Apache Software Foundation (ASF) under one
+~~ or more contributor license agreements.  See the NOTICE file
+~~ distributed with this work for additional information
+~~ regarding copyright ownership.  The ASF licenses this file
+~~ to you under the Apache License, Version 2.0 (the
+~~ "License"); you may not use this file except in compliance
+~~ with the License.  You may obtain a copy of the License at
+~~
+~~   http://www.apache.org/licenses/LICENSE-2.0
+~~
+~~ Unless required by applicable law or agreed to in writing,
+~~ software distributed under the License is distributed on an
+~~ "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+~~ KIND, either express or implied.  See the License for the
+~~ specific language governing permissions and limitations
+~~ under the License.
+
+~~ NOTE: For help with the syntax of this file, see:
+~~ http://maven.apache.org/guides/mini/guide-apt-format.html
+
+Release Notes for Apache Helix 2.0.0
+
+  The Apache Helix team would like to announce the release of Apache Helix 2.0.0.
+
+  This is the thirty third release under the Apache umbrella, and the twenty ninth as a top-level project.
+
+  Helix is a generic cluster management framework used for the automatic management of partitioned, replicated and distributed resources hosted on a cluster of nodes.
+
+[]
+
+* Major Feature
+
+  ** Helix Gateway
+
+  Introduced the helix-gateway module, a standalone sidecar service that enables non-JVM applications to participate in Helix-managed clusters. Helix Gateway manages ZooKeeper connections and participant lifecycle on behalf of remote application instances, communicating via bidirectional streaming gRPC or file-based polling. This eliminates the requirement for applications to embed the Helix Java client library and opens Helix to polyglot environments (Python, Go, C++, etc.). Key capabilities include:
+
+    * Bidirectional streaming gRPC service for real-time state transition forwarding and response handling
+
+    * File-based poll mode for sidecar deployments using shared volumes (e.g., Kubernetes pods)
+
+    * In-memory current state and target state caching per cluster/instance/resource/shard
+
+    * Support for multiple clusters and multiple participants in a single gateway instance
+
+    * Generic multi-top-state state model with wildcard transition handling
+
+  ** Sunset Helix UI Modules (helix-front and helix-admin-webapp)
+
+  Removed the helix-front and helix-admin-webapp modules from the Helix distribution for security reasons. These web UI components carried third-party frontend dependencies with known vulnerabilities and were not actively maintained. Users who require a management UI are encouraged to use the Helix REST Service 2.0 API directly or build custom tooling on top of it.
+
+* Detailed Changes
+
+  ** Feature
+
+	* Support zone based virtual topology assignment algorithm (#2986)
+
+	* Create condition based rebalancer (#2846)
+
+	* Make StickyRebalanceStrategy topology aware (#2944)
+
+	* Helix stickiness rebalancer (#2878)
+
+	* Add auto deregistration of offline participants after timeout (#2932)
+
+	* Add currentReplicaNumber metadata for message prioritization by client (#3043)
+
+	* Make virtual group assignment for FaultZoneBasedVirtualGroupAssignmentAlgorithm deterministic (#3056)
+
+	* Add cluster config update validation (#3026)
+
+	* Support Stoppable Check for Non-Topology-Aware Clusters (#2961)
+
+	* Add atomic recursive delete to ZK client and use for drop instance (#2994)
+
+	* Make retry timeout configurable for ZK calls via system property
+
+  ** Bug Fixes
+
+	* Prevent controller from dropping replicas when best possible fails to calculate assignment (#3034)
+
+	* Fix a race condition in metaclient leader election (#3058)
+
+	* Fix issue in virtual topology string computation that incorrectly discards non-end topology nodes (#3031)
+
+	* Fix dropping error state partition for customized resource (#3024)
+
+	* Skip min active check if instance replica in unhealthy state (#3019)
+
+	* Fix waged instance capacity npe on new resource (#2969)
+
+	* Fix endless creation of best possible nodes triggered by unintended modification of cached best possible map (#2970)
+
+	* Add default get value for task partition map to prevent NPE (#3078)
+
+	* Add null check for getClusterConfig()
+
+	* Fix Flaky Test - testGCScheduler in TestZkBucketDataAcessor (#3003)
+
+  ** Improvements
+
+	* Improve performance for ConstraintBasedAlgorithm (#3032)
+
+	* Performance improvement for IsEvacuateFinished (#3037)
+
+	* Improve setInstanceOperation performance (#3017)
+
+	* Only build property key path on construction (#3040)
+
+	* Move existing assignments usage calculation to pre-process stage (#2888)
+
+	* Clear removed instances from the cached offline time map (#3012)
+
+	* Change enabling hard constraint logging statement from INFO to DEBUG level (#3002)
+
+	* Change customized stoppable check log level (#3004)
+
+	* Changed all XML schema locations from http to https for security reasons (#3080)
+
+	* Bump io.netty:netty-codec from 4.1.68.Final to 4.1.125.Final (#3068)
+
+	* Bump org.eclipse.jetty:jetty-server (#3039)
+
+	* Bump com.fasterxml.jackson.core:jackson-core in multiple modules (#3046, #3047, #3051, #3087)
+
+	* Bump org.apache.commons:commons-lang3 (#3053, #3086)
+
+	* Bump commons-io:commons-io (#2948, #2989)
+
+	* Bump com.thoughtworks.xstream:xstream (#2981, #2996)
+
+[]
+
+Cheers,
+--
+The Apache Helix Team
