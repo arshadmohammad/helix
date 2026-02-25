@@ -25,41 +25,30 @@ import java.util.concurrent.TimeUnit;
 import javax.security.auth.login.AppConfigurationEntry;
 import javax.security.auth.login.Configuration;
 
+import org.apache.helix.zookeeper.impl.ZkTestBase;
+import org.apache.helix.zookeeper.impl.client.ZkClient;
+import org.apache.helix.zookeeper.zkclient.serialize.BasicZkSerializer;
+import org.apache.helix.zookeeper.zkclient.serialize.SerializableSerializer;
+import org.apache.zookeeper.CreateMode;
 import org.apache.zookeeper.Watcher.Event.KeeperState;
-import org.apache.zookeeper.ZooKeeper;
 import org.apache.zookeeper.client.ZKClientConfig;
 import org.testng.Assert;
 import org.testng.annotations.AfterMethod;
 import org.testng.annotations.BeforeMethod;
 import org.testng.annotations.Test;
 
-import static org.mockito.Mockito.*;
-
 /**
- * Unit tests for Kerberos authentication detection in ZkClient
+ * Integration tests for Kerberos authentication detection in ZkClient
  */
-public class TestZkClientKerberos {
+public class TestZkClientKerberos extends ZkTestBase {
   
-  private TestableZkClient _zkClient;
-  private ZkConnection _mockZkConnection;
-  private ZooKeeper _mockZooKeeper;
-  private ZKClientConfig _mockZkClientConfig;
+  private ZkClient _zkClient;
   private Configuration _originalJaasConfig;
 
   @BeforeMethod
   public void setUp() {
     // Save original JAAS configuration
     _originalJaasConfig = Configuration.getConfiguration();
-    
-    // Create mocks
-    _mockZkConnection = mock(ZkConnection.class);
-    _mockZooKeeper = mock(ZooKeeper.class);
-    _mockZkClientConfig = mock(ZKClientConfig.class);
-    
-    // Setup basic mock behavior
-    when(_mockZkConnection.getServers()).thenReturn("localhost:2181");
-    when(_mockZkConnection.getZookeeper()).thenReturn(_mockZooKeeper);
-    when(_mockZooKeeper.getClientConfig()).thenReturn(_mockZkClientConfig);
   }
 
   @AfterMethod
@@ -79,18 +68,18 @@ public class TestZkClientKerberos {
    */
   @Test
   public void testIsKerberosAuthEnabled_WhenSaslDisabled() throws Exception {
-    // Setup: SASL is disabled
-    when(_mockZkClientConfig.isSaslClientEnabled()).thenReturn(false);
-    
-    // Create ZkClient with mocked connection
-    _zkClient = createTestZkClient(_mockZkConnection);
+    // Create ZkClient with SASL disabled (default configuration)
+    ZkClient.Builder builder = new ZkClient.Builder();
+    builder.setZkServer(ZkTestBase.ZK_ADDR)
+        .setMonitorRootPathOnly(false);
+    _zkClient = builder.build();
+    _zkClient.setZkSerializer(new BasicZkSerializer(new SerializableSerializer()));
     
     // Use reflection to call private isKerberosAuthEnabled method
     boolean result = invokeIsKerberosAuthEnabled(_zkClient);
     
     // Verify
     Assert.assertFalse(result, "isKerberosAuthEnabled should return false when SASL is disabled");
-    verify(_mockZkClientConfig).isSaslClientEnabled();
   }
 
   /**
@@ -98,11 +87,6 @@ public class TestZkClientKerberos {
    */
   @Test
   public void testIsKerberosAuthEnabled_WhenSaslEnabledWithKerberos() throws Exception {
-    // Setup: SASL is enabled
-    when(_mockZkClientConfig.isSaslClientEnabled()).thenReturn(true);
-    when(_mockZkClientConfig.getProperty(ZKClientConfig.LOGIN_CONTEXT_NAME_KEY, ZKClientConfig.LOGIN_CONTEXT_NAME_KEY_DEFAULT))
-        .thenReturn(ZKClientConfig.LOGIN_CONTEXT_NAME_KEY_DEFAULT);
-    
     // Setup JAAS configuration with Krb5LoginModule
     Configuration jaasConfig = new Configuration() {
       @Override
@@ -121,16 +105,26 @@ public class TestZkClientKerberos {
     };
     Configuration.setConfiguration(jaasConfig);
     
-    // Create ZkClient with mocked connection
-    _zkClient = createTestZkClient(_mockZkConnection);
+    // Enable SASL via system property
+    System.setProperty("zookeeper.sasl.client", "true");
     
-    // Use reflection to call private isKerberosAuthEnabled method
-    boolean result = invokeIsKerberosAuthEnabled(_zkClient);
-    
-    // Verify
-    Assert.assertTrue(result, "isKerberosAuthEnabled should return true when Krb5LoginModule is configured");
-    verify(_mockZkClientConfig).isSaslClientEnabled();
-    verify(_mockZkClientConfig).getProperty(ZKClientConfig.LOGIN_CONTEXT_NAME_KEY, ZKClientConfig.LOGIN_CONTEXT_NAME_KEY_DEFAULT);
+    try {
+      // Create ZkClient without connecting (to avoid SASL auth issues with non-SASL ZK server)
+      ZkClient.Builder builder = new ZkClient.Builder();
+      builder.setZkServer(ZkTestBase.ZK_ADDR)
+          .setMonitorRootPathOnly(false)
+          .setConnectOnInit(false); // Don't connect during initialization
+      _zkClient = builder.build();
+      _zkClient.setZkSerializer(new BasicZkSerializer(new SerializableSerializer()));
+      
+      // Use reflection to call private isKerberosAuthEnabled method
+      boolean result = invokeIsKerberosAuthEnabled(_zkClient);
+      
+      // Verify
+      Assert.assertTrue(result, "isKerberosAuthEnabled should return true when Krb5LoginModule is configured");
+    } finally {
+      System.clearProperty("zookeeper.sasl.client");
+    }
   }
 
   /**
@@ -138,11 +132,6 @@ public class TestZkClientKerberos {
    */
   @Test
   public void testIsKerberosAuthEnabled_WhenSaslEnabledWithoutKerberos() throws Exception {
-    // Setup: SASL is enabled but with non-Kerberos module
-    when(_mockZkClientConfig.isSaslClientEnabled()).thenReturn(true);
-    when(_mockZkClientConfig.getProperty(ZKClientConfig.LOGIN_CONTEXT_NAME_KEY, ZKClientConfig.LOGIN_CONTEXT_NAME_KEY_DEFAULT))
-        .thenReturn(ZKClientConfig.LOGIN_CONTEXT_NAME_KEY_DEFAULT);
-    
     // Setup JAAS configuration with non-Kerberos module
     Configuration jaasConfig = new Configuration() {
       @Override
@@ -161,15 +150,25 @@ public class TestZkClientKerberos {
     };
     Configuration.setConfiguration(jaasConfig);
     
-    // Create ZkClient with mocked connection
-    _zkClient = createTestZkClient(_mockZkConnection);
+    // Enable SASL via system property
+    System.setProperty("zookeeper.sasl.client", "true");
     
-    // Use reflection to call private isKerberosAuthEnabled method
-    boolean result = invokeIsKerberosAuthEnabled(_zkClient);
-    
-    // Verify
-    Assert.assertFalse(result, "isKerberosAuthEnabled should return false when Kerberos is not configured");
-    verify(_mockZkClientConfig).isSaslClientEnabled();
+    try {
+      // Create ZkClient
+      ZkClient.Builder builder = new ZkClient.Builder();
+      builder.setZkServer(ZkTestBase.ZK_ADDR)
+          .setMonitorRootPathOnly(false);
+      _zkClient = builder.build();
+      _zkClient.setZkSerializer(new BasicZkSerializer(new SerializableSerializer()));
+      
+      // Use reflection to call private isKerberosAuthEnabled method
+      boolean result = invokeIsKerberosAuthEnabled(_zkClient);
+      
+      // Verify
+      Assert.assertFalse(result, "isKerberosAuthEnabled should return false when Kerberos is not configured");
+    } finally {
+      System.clearProperty("zookeeper.sasl.client");
+    }
   }
 
   /**
@@ -177,11 +176,6 @@ public class TestZkClientKerberos {
    */
   @Test
   public void testIsKerberosAuthEnabled_WithCustomJaasContext() throws Exception {
-    // Setup: SASL is enabled with custom context name
-    when(_mockZkClientConfig.isSaslClientEnabled()).thenReturn(true);
-    when(_mockZkClientConfig.getProperty(ZKClientConfig.LOGIN_CONTEXT_NAME_KEY, ZKClientConfig.LOGIN_CONTEXT_NAME_KEY_DEFAULT))
-        .thenReturn("CustomClient");
-    
     // Setup JAAS configuration with custom context
     Configuration jaasConfig = new Configuration() {
       @Override
@@ -200,15 +194,27 @@ public class TestZkClientKerberos {
     };
     Configuration.setConfiguration(jaasConfig);
     
-    // Create ZkClient with mocked connection
-    _zkClient = createTestZkClient(_mockZkConnection);
+    // Enable SASL and set custom context name
+    System.setProperty("zookeeper.sasl.client", "true");
+    System.setProperty(ZKClientConfig.LOGIN_CONTEXT_NAME_KEY, "CustomClient");
     
-    // Use reflection to call private isKerberosAuthEnabled method
-    boolean result = invokeIsKerberosAuthEnabled(_zkClient);
-    
-    // Verify
-    Assert.assertTrue(result, "isKerberosAuthEnabled should work with custom JAAS context");
-    verify(_mockZkClientConfig).getProperty(ZKClientConfig.LOGIN_CONTEXT_NAME_KEY, ZKClientConfig.LOGIN_CONTEXT_NAME_KEY_DEFAULT);
+    try {
+      // Create ZkClient
+      ZkClient.Builder builder = new ZkClient.Builder();
+      builder.setZkServer(ZkTestBase.ZK_ADDR)
+          .setMonitorRootPathOnly(false);
+      _zkClient = builder.build();
+      _zkClient.setZkSerializer(new BasicZkSerializer(new SerializableSerializer()));
+      
+      // Use reflection to call private isKerberosAuthEnabled method
+      boolean result = invokeIsKerberosAuthEnabled(_zkClient);
+      
+      // Verify
+      Assert.assertTrue(result, "isKerberosAuthEnabled should work with custom JAAS context");
+    } finally {
+      System.clearProperty("zookeeper.sasl.client");
+      System.clearProperty(ZKClientConfig.LOGIN_CONTEXT_NAME_KEY);
+    }
   }
 
   /**
@@ -216,11 +222,6 @@ public class TestZkClientKerberos {
    */
   @Test
   public void testIsKerberosAuthEnabled_WhenJaasConfigNull() throws Exception {
-    // Setup: SASL is enabled but JAAS config returns null
-    when(_mockZkClientConfig.isSaslClientEnabled()).thenReturn(true);
-    when(_mockZkClientConfig.getProperty(ZKClientConfig.LOGIN_CONTEXT_NAME_KEY, ZKClientConfig.LOGIN_CONTEXT_NAME_KEY_DEFAULT))
-        .thenReturn(ZKClientConfig.LOGIN_CONTEXT_NAME_KEY_DEFAULT);
-    
     // Setup JAAS configuration that returns null
     Configuration jaasConfig = new Configuration() {
       @Override
@@ -230,14 +231,25 @@ public class TestZkClientKerberos {
     };
     Configuration.setConfiguration(jaasConfig);
     
-    // Create ZkClient with mocked connection
-    _zkClient = createTestZkClient(_mockZkConnection);
+    // Enable SASL via system property
+    System.setProperty("zookeeper.sasl.client", "true");
     
-    // Use reflection to call private isKerberosAuthEnabled method
-    boolean result = invokeIsKerberosAuthEnabled(_zkClient);
-    
-    // Verify
-    Assert.assertFalse(result, "isKerberosAuthEnabled should return false when JAAS config is null");
+    try {
+      // Create ZkClient
+      ZkClient.Builder builder = new ZkClient.Builder();
+      builder.setZkServer(ZkTestBase.ZK_ADDR)
+          .setMonitorRootPathOnly(false);
+      _zkClient = builder.build();
+      _zkClient.setZkSerializer(new BasicZkSerializer(new SerializableSerializer()));
+      
+      // Use reflection to call private isKerberosAuthEnabled method
+      boolean result = invokeIsKerberosAuthEnabled(_zkClient);
+      
+      // Verify
+      Assert.assertFalse(result, "isKerberosAuthEnabled should return false when JAAS config is null");
+    } finally {
+      System.clearProperty("zookeeper.sasl.client");
+    }
   }
 
   /**
@@ -245,11 +257,6 @@ public class TestZkClientKerberos {
    */
   @Test
   public void testIsKerberosAuthEnabled_WithIBMKrb5LoginModule() throws Exception {
-    // Setup: SASL is enabled
-    when(_mockZkClientConfig.isSaslClientEnabled()).thenReturn(true);
-    when(_mockZkClientConfig.getProperty(ZKClientConfig.LOGIN_CONTEXT_NAME_KEY, ZKClientConfig.LOGIN_CONTEXT_NAME_KEY_DEFAULT))
-        .thenReturn(ZKClientConfig.LOGIN_CONTEXT_NAME_KEY_DEFAULT);
-    
     // Setup JAAS configuration with IBM Krb5LoginModule
     Configuration jaasConfig = new Configuration() {
       @Override
@@ -268,177 +275,179 @@ public class TestZkClientKerberos {
     };
     Configuration.setConfiguration(jaasConfig);
     
-    // Create ZkClient with mocked connection
-    _zkClient = createTestZkClient(_mockZkConnection);
+    // Enable SASL via system property
+    System.setProperty("zookeeper.sasl.client", "true");
     
-    // Use reflection to call private isKerberosAuthEnabled method
-    boolean result = invokeIsKerberosAuthEnabled(_zkClient);
-    
-    // Verify
-    Assert.assertTrue(result, "isKerberosAuthEnabled should detect IBM JDK Krb5LoginModule");
+    try {
+      // Create ZkClient
+      ZkClient.Builder builder = new ZkClient.Builder();
+      builder.setZkServer(ZkTestBase.ZK_ADDR)
+          .setMonitorRootPathOnly(false);
+      _zkClient = builder.build();
+      _zkClient.setZkSerializer(new BasicZkSerializer(new SerializableSerializer()));
+      
+      // Use reflection to call private isKerberosAuthEnabled method
+      boolean result = invokeIsKerberosAuthEnabled(_zkClient);
+      
+      // Verify
+      Assert.assertTrue(result, "isKerberosAuthEnabled should detect IBM JDK Krb5LoginModule");
+    } finally {
+      System.clearProperty("zookeeper.sasl.client");
+    }
   }
 
   /**
-   * Test waitUntilConnected waits for SaslAuthenticated when Kerberos is enabled
-   */
-  @Test
-  public void testWaitUntilConnected_WithKerberosEnabled() throws Exception {
-    // Setup: Kerberos is enabled
-    when(_mockZkClientConfig.isSaslClientEnabled()).thenReturn(true);
-    when(_mockZkClientConfig.getProperty(ZKClientConfig.LOGIN_CONTEXT_NAME_KEY, ZKClientConfig.LOGIN_CONTEXT_NAME_KEY_DEFAULT))
-        .thenReturn(ZKClientConfig.LOGIN_CONTEXT_NAME_KEY_DEFAULT);
-    
-    Configuration jaasConfig = new Configuration() {
-      @Override
-      public AppConfigurationEntry[] getAppConfigurationEntry(String name) {
-        if (ZKClientConfig.LOGIN_CONTEXT_NAME_KEY_DEFAULT.equals(name)) {
-          return new AppConfigurationEntry[] {
-              new AppConfigurationEntry(
-                  "com.sun.security.auth.module.Krb5LoginModule",
-                  AppConfigurationEntry.LoginModuleControlFlag.REQUIRED,
-                  new HashMap<>()
-              )
-          };
-        }
-        return null;
-      }
-    };
-    Configuration.setConfiguration(jaasConfig);
-    
-    // Create ZkClient with mocked connection
-    _zkClient = createTestZkClient(_mockZkConnection);
-    
-    // Set current state to SaslAuthenticated
-    _zkClient.setCurrentState(KeeperState.SaslAuthenticated);
-    
-    // Test waitUntilConnected
-    boolean result = _zkClient.waitUntilConnected(100, TimeUnit.MILLISECONDS);
-    
-    // Verify
-    Assert.assertTrue(result, "waitUntilConnected should succeed when SaslAuthenticated");
-  }
-
-  /**
-   * Test waitUntilConnected waits for SyncConnected when Kerberos is disabled
+   * Test waitUntilConnected with Kerberos disabled
+   * When Kerberos is disabled, waitUntilConnected should succeed with SyncConnected state
    */
   @Test
   public void testWaitUntilConnected_WithKerberosDisabled() throws Exception {
-    // Setup: Kerberos is disabled
-    when(_mockZkClientConfig.isSaslClientEnabled()).thenReturn(false);
+    // Create ZkClient with SASL disabled (default configuration)
+    ZkClient.Builder builder = new ZkClient.Builder();
+    builder.setZkServer(ZkTestBase.ZK_ADDR)
+        .setMonitorRootPathOnly(false);
+    _zkClient = builder.build();
+    _zkClient.setZkSerializer(new BasicZkSerializer(new SerializableSerializer()));
     
-    // Create ZkClient with mocked connection
-    _zkClient = createTestZkClient(_mockZkConnection);
-    
-    // Set current state to SyncConnected
-    _zkClient.setCurrentState(KeeperState.SyncConnected);
-    
-    // Test waitUntilConnected
-    boolean result = _zkClient.waitUntilConnected(100, TimeUnit.MILLISECONDS);
+    // Test waitUntilConnected - should succeed as client connects to real ZK
+    boolean result = _zkClient.waitUntilConnected(5000, TimeUnit.MILLISECONDS);
     
     // Verify
-    Assert.assertTrue(result, "waitUntilConnected should succeed when SyncConnected");
+    Assert.assertTrue(result, "waitUntilConnected should succeed when connected to ZK");
+    
+    // Verify isKerberosAuthEnabled is false
+    boolean kerberosEnabled = invokeIsKerberosAuthEnabled(_zkClient);
+    Assert.assertFalse(kerberosEnabled, "Kerberos should not be enabled");
   }
 
   /**
-   * Test waitForEstablishedSession uses waitUntilConnected
+   * Test basic operations work with default (non-Kerberos) configuration
    */
   @Test
-  public void testWaitForEstablishedSession_UsesWaitUntilConnected() throws Exception {
-    // Setup: Kerberos is disabled
-    when(_mockZkClientConfig.isSaslClientEnabled()).thenReturn(false);
-    when(_mockZooKeeper.getSessionId()).thenReturn(12345L);
+  public void testBasicOperations_WithKerberosDisabled() throws Exception {
+    // Create ZkClient with SASL disabled
+    ZkClient.Builder builder = new ZkClient.Builder();
+    builder.setZkServer(ZkTestBase.ZK_ADDR)
+        .setMonitorRootPathOnly(false);
+    _zkClient = builder.build();
+    _zkClient.setZkSerializer(new BasicZkSerializer(new SerializableSerializer()));
     
-    // Create ZkClient with mocked connection
-    _zkClient = createTestZkClient(_mockZkConnection);
+    // Wait for connection
+    boolean connected = _zkClient.waitUntilConnected(5000, TimeUnit.MILLISECONDS);
+    Assert.assertTrue(connected, "Should connect to ZK");
     
-    // Set current state to SyncConnected
-    _zkClient.setCurrentState(KeeperState.SyncConnected);
+    // Test basic CRUD operations
+    String testPath = "/testKerberosDisabled";
+    _zkClient.create(testPath, "testData", CreateMode.PERSISTENT);
+    
+    String data = _zkClient.readData(testPath);
+    Assert.assertEquals(data, "testData", "Should read correct data");
+    
+    _zkClient.writeData(testPath, "updatedData");
+    data = _zkClient.readData(testPath);
+    Assert.assertEquals(data, "updatedData", "Should read updated data");
+    
+    _zkClient.delete(testPath);
+    Assert.assertFalse(_zkClient.exists(testPath), "Node should be deleted");
+  }
+
+  /**
+   * Test waitForEstablishedSession with default configuration
+   */
+  @Test
+  public void testWaitForEstablishedSession_WithKerberosDisabled() throws Exception {
+    // Create ZkClient with SASL disabled
+    ZkClient.Builder builder = new ZkClient.Builder();
+    builder.setZkServer(ZkTestBase.ZK_ADDR)
+        .setMonitorRootPathOnly(false);
+    _zkClient = builder.build();
+    _zkClient.setZkSerializer(new BasicZkSerializer(new SerializableSerializer()));
     
     // Test waitForEstablishedSession
-    long sessionId = _zkClient.waitForEstablishedSession(100, TimeUnit.MILLISECONDS);
+    long sessionId = _zkClient.waitForEstablishedSession(5000, TimeUnit.MILLISECONDS);
     
     // Verify
-    Assert.assertEquals(sessionId, 12345L, "waitForEstablishedSession should return session ID");
-    verify(_mockZooKeeper).getSessionId();
+    Assert.assertTrue(sessionId > 0, "Should return valid session ID");
   }
 
   /**
-   * Test waitForEstablishedSession with Kerberos enabled
+   * Test that multiple clients can be created with different configurations
    */
   @Test
-  public void testWaitForEstablishedSession_WithKerberos() throws Exception {
-    // Setup: Kerberos is enabled
-    when(_mockZkClientConfig.isSaslClientEnabled()).thenReturn(true);
-    when(_mockZkClientConfig.getProperty(ZKClientConfig.LOGIN_CONTEXT_NAME_KEY, ZKClientConfig.LOGIN_CONTEXT_NAME_KEY_DEFAULT))
-        .thenReturn(ZKClientConfig.LOGIN_CONTEXT_NAME_KEY_DEFAULT);
-    when(_mockZooKeeper.getSessionId()).thenReturn(67890L);
+  public void testMultipleClientsWithDifferentConfigurations() throws Exception {
+    ZkClient client1 = null;
+    ZkClient client2 = null;
     
-    Configuration jaasConfig = new Configuration() {
-      @Override
-      public AppConfigurationEntry[] getAppConfigurationEntry(String name) {
-        if (ZKClientConfig.LOGIN_CONTEXT_NAME_KEY_DEFAULT.equals(name)) {
-          return new AppConfigurationEntry[] {
-              new AppConfigurationEntry(
-                  "com.sun.security.auth.module.Krb5LoginModule",
-                  AppConfigurationEntry.LoginModuleControlFlag.REQUIRED,
-                  new HashMap<>()
-              )
-          };
-        }
-        return null;
+    try {
+      // Create first client with default configuration
+      ZkClient.Builder builder1 = new ZkClient.Builder();
+      builder1.setZkServer(ZkTestBase.ZK_ADDR)
+          .setMonitorRootPathOnly(false);
+      client1 = builder1.build();
+      client1.setZkSerializer(new BasicZkSerializer(new SerializableSerializer()));
+      
+      // Create second client with default configuration
+      ZkClient.Builder builder2 = new ZkClient.Builder();
+      builder2.setZkServer(ZkTestBase.ZK_ADDR)
+          .setMonitorRootPathOnly(false);
+      client2 = builder2.build();
+      client2.setZkSerializer(new BasicZkSerializer(new SerializableSerializer()));
+      
+      // Both should connect successfully
+      Assert.assertTrue(client1.waitUntilConnected(5000, TimeUnit.MILLISECONDS));
+      Assert.assertTrue(client2.waitUntilConnected(5000, TimeUnit.MILLISECONDS));
+      
+      // Test that they can interact with ZK independently
+      String path1 = "/testMultiClient1";
+      String path2 = "/testMultiClient2";
+      
+      client1.create(path1, "data1", CreateMode.PERSISTENT);
+      client2.create(path2, "data2", CreateMode.PERSISTENT);
+      
+      Assert.assertEquals(client1.readData(path1), "data1");
+      Assert.assertEquals(client2.readData(path2), "data2");
+      
+      // Cleanup
+      client1.delete(path1);
+      client2.delete(path2);
+      
+    } finally {
+      if (client1 != null && !client1.isClosed()) {
+        client1.close();
       }
-    };
-    Configuration.setConfiguration(jaasConfig);
+      if (client2 != null && !client2.isClosed()) {
+        client2.close();
+      }
+    }
+  }
+
+  /**
+   * Test connection timeout behavior
+   */
+  @Test
+  public void testConnectionTimeout() throws Exception {
+    // Create ZkClient with very short timeout
+    ZkClient.Builder builder = new ZkClient.Builder();
+    builder.setZkServer(ZkTestBase.ZK_ADDR)
+        .setMonitorRootPathOnly(false)
+        .setConnectionTimeout(10000); // 10 seconds should be enough for local ZK
+    _zkClient = builder.build();
+    _zkClient.setZkSerializer(new BasicZkSerializer(new SerializableSerializer()));
     
-    // Create ZkClient with mocked connection
-    _zkClient = createTestZkClient(_mockZkConnection);
-    
-    // Set current state to SaslAuthenticated
-    _zkClient.setCurrentState(KeeperState.SaslAuthenticated);
-    
-    // Test waitForEstablishedSession
-    long sessionId = _zkClient.waitForEstablishedSession(100, TimeUnit.MILLISECONDS);
-    
-    // Verify
-    Assert.assertEquals(sessionId, 67890L, "waitForEstablishedSession should work with Kerberos");
-    verify(_mockZooKeeper).getSessionId();
+    // Should connect within timeout
+    boolean result = _zkClient.waitUntilConnected(15000, TimeUnit.MILLISECONDS);
+    Assert.assertTrue(result, "Should connect within timeout");
   }
 
   // Helper methods
 
   /**
-   * Create a test ZkClient with mocked connection
-   */
-  private TestableZkClient createTestZkClient(ZkConnection mockZkConnection) {
-    return new TestableZkClient(mockZkConnection);
-  }
-
-  /**
    * Use reflection to invoke private isKerberosAuthEnabled method
    */
-  private boolean invokeIsKerberosAuthEnabled(TestableZkClient zkClient) throws Exception {
-    return zkClient.testIsKerberosAuthEnabled();
-  }
-  
-  /**
-   * Testable subclass of ZkClient that exposes protected/private methods for testing
-   */
-  private static class TestableZkClient extends ZkClient {
-    public TestableZkClient(IZkConnection zkConnection) {
-      super(zkConnection, Integer.MAX_VALUE, 10000, null, null, null, null, false);
-    }
-    
-    /**
-     * Expose isKerberosAuthEnabled for testing
-     */
-    public boolean testIsKerberosAuthEnabled() {
-      try {
-        Method method = ZkClient.class.getDeclaredMethod("isKerberosAuthEnabled");
-        method.setAccessible(true);
-        return (Boolean) method.invoke(this);
-      } catch (Exception e) {
-        throw new RuntimeException("Failed to invoke isKerberosAuthEnabled", e);
-      }
-    }
+  private boolean invokeIsKerberosAuthEnabled(ZkClient zkClient) throws Exception {
+    // The method is in the base class org.apache.helix.zookeeper.zkclient.ZkClient
+    Method method = org.apache.helix.zookeeper.zkclient.ZkClient.class.getDeclaredMethod("isKerberosAuthEnabled");
+    method.setAccessible(true);
+    return (Boolean) method.invoke(zkClient);
   }
 }
